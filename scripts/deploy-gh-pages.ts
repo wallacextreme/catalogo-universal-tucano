@@ -27,14 +27,33 @@ const run = (cmd: string[], cwd = distDir) => {
   }
 };
 
+let token = process.env.GITHUB_TOKEN || '';
+if (!token) {
+  try {
+    const res = Bun.spawnSync(['gh', 'auth', 'token']);
+    if (res.exitCode === 0) {
+      token = res.stdout.toString().trim();
+    }
+  } catch {}
+}
+
+const remoteUrl = token
+  ? `https://${token}@github.com/wallacextreme/catalogo-universal-tucano.git`
+  : 'https://github.com/wallacextreme/catalogo-universal-tucano.git';
+
+const gitInDist = resolve(distDir, '.git');
+if (existsSync(gitInDist)) {
+  rmSync(gitInDist, { recursive: true, force: true });
+}
+
 try {
   run(['git', 'init']);
   run(['git', 'checkout', '-B', 'gh-pages']);
   run(['git', 'add', '-A']);
   run(['git', 'commit', '-m', `deploy: PWA release ${new Date().toISOString()}`]);
-  run(['git', 'remote', 'add', 'origin', 'https://github.com/wallacextreme/catalogo-universal-tucano.git']);
-} catch {
-  // Ignora se o remote já existir
+  run(['git', 'remote', 'add', 'origin', remoteUrl]);
+} catch (e) {
+  console.warn('Configuração git no dist:', e);
 }
 
 try {
@@ -42,7 +61,6 @@ try {
   run(['git', 'push', '-f', 'origin', 'gh-pages']);
   console.log('Publicação no GitHub Pages realizada com sucesso!');
 } finally {
-  const gitInDist = resolve(distDir, '.git');
   if (existsSync(gitInDist)) {
     rmSync(gitInDist, { recursive: true, force: true });
   }
