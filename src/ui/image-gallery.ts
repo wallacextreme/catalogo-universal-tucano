@@ -12,6 +12,16 @@ export interface GalleryItem {
   isCover: boolean;
 }
 
+export function resolveImageUrl(url: string): string {
+  if (!url) return '';
+  if (url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  const cleanPath = url.startsWith('/') ? url.slice(1) : url;
+  const base = import.meta.env.BASE_URL || './';
+  return `${base}${cleanPath}`;
+}
+
 export class ImageGallery {
   public static async getDisplayItemsForProduct(product: Product): Promise<GalleryItem[]> {
     const items: GalleryItem[] = [];
@@ -66,7 +76,7 @@ export class ImageGallery {
 
     // Ordena para que a foto de capa seja a primeira
     const sortedItems = [...items].sort((a, b) => (b.isCover ? 1 : 0) - (a.isCover ? 1 : 0));
-    const urls = sortedItems.map(i => i.url);
+    const urls = sortedItems.map(i => resolveImageUrl(i.url));
     const coverUrl = urls[0];
     const totalAngles = urls.length;
     const urlsJson = encodeURIComponent(JSON.stringify(urls));

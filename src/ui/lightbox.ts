@@ -14,7 +14,13 @@ export class Lightbox {
 
   public open(imagesInput: string[] | string, title: string, initialIndex = 0): void {
     this.close();
-    this.images = Array.isArray(imagesInput) ? imagesInput : [imagesInput];
+    const raw = Array.isArray(imagesInput) ? imagesInput : [imagesInput];
+    this.images = raw.map(u => {
+      if (!u || u.startsWith('blob:') || u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://') || u.startsWith('./')) return u;
+      const clean = u.startsWith('/') ? u.slice(1) : u;
+      const base = import.meta.env.BASE_URL || './';
+      return `${base}${clean}`;
+    });
     if (this.images.length === 0) return;
 
     this.currentIndex = Math.max(0, Math.min(initialIndex, this.images.length - 1));

@@ -38,7 +38,8 @@ class App {
 
     // 4. Registra Service Worker PWA (Offline-First)
     if ('serviceWorker' in navigator && !window.location.host.includes('tauri')) {
-      navigator.serviceWorker.register('/sw.js').catch(err => {
+      const swUrl = `${import.meta.env.BASE_URL || './'}sw.js`;
+      navigator.serviceWorker.register(swUrl).catch(err => {
         console.warn('Falha ao registrar Service Worker:', err);
       });
     }

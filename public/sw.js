@@ -1,19 +1,27 @@
 // Service Worker Offline-First para Catálogo Universal Tucano
-const CACHE_NAME = 'tucano-catalog-v1';
+const CACHE_NAME = 'tucano-catalog-v2';
 
-const STATIC_PRECACHE = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/favicon.ico'
-];
+const getBasePath = () => {
+  const swPath = self.location.pathname;
+  return swPath.substring(0, swPath.lastIndexOf('/') + 1);
+};
 
 self.addEventListener('install', (event) => {
+  const base = getBasePath();
+  const staticAssets = [
+    base,
+    `${base}index.html`,
+    `${base}manifest.webmanifest`,
+    `${base}icon-192.png`,
+    `${base}icon-512.png`,
+    `${base}favicon.ico`
+  ];
+
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_PRECACHE);
+      return cache.addAll(staticAssets).catch(err => {
+        console.warn('Falha parcial no pré-cache estático:', err);
+      });
     }).then(() => self.skipWaiting())
   );
 });
@@ -33,18 +41,17 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Ignora chamadas não GET ou de outras origens
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
 
-  // Cache-First para imagens do catálogo e assets
-  if (url.pathname.startsWith('/catalog-images/') || url.pathname.startsWith('/assets/')) {
+  // Cache-First para imagens do catálogo e assets compilados
+  if (url.pathname.includes('/catalog-images/') || url.pathname.includes('/assets/')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
         if (cached) return cached;
         return fetch(event.request).then((response) => {
-          if (!response || response.status !== 200 || response.type !== 'basic') {
+          if (!response || response.status !== 200) {
             return response;
           }
           const responseToCache = response.clone();
@@ -58,7 +65,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-First caindo para Cache para as outras rotas
+  // Network-First caindo para Cache para as outras requisições
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
@@ -70,6 +77,6 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match(getBasePath() + 'index.html')))
   );
 });
