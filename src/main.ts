@@ -1,0 +1,605 @@
+import './style.css';
+import { ProductWithInventory, RelationLink } from './domain/types';
+import { storage } from './storage/indexeddb';
+import { searchEngine, SearchMatch } from './search/search-engine';
+import { relationsEngine } from './relations/relations-engine';
+import { ImageGallery } from './ui/image-gallery';
+import { lightbox } from './ui/lightbox';
+import { productFormModal } from './ui/product-form-modal';
+import { BackupRestoreManager } from './ui/backup-restore';
+import { icons } from './ui/icons';
+import { formatBRL } from './domain/currency';
+import seedData from './data/catalog-master-seed.json';
+
+class App {
+  private allProducts: ProductWithInventory[] = [];
+  private allRelations: RelationLink[] = [];
+  private currentMatches: SearchMatch[] = [];
+  private clientMode = false; // Modo Cliente: Oculta Preços no Balcão
+  private isDark = false;
+  private currentFilterAutomaker = 'all';
+  private currentFilterPrice = 'all';
+  private currentTab: 'catalog' | 'trash' = 'catalog';
+  private lastSearchTimeMs = 0;
+
+  public async init(): Promise<void> {
+    // 1. Configura Tema (Daylight Counter Mode como padrão)
+    this.isDark = localStorage.getItem('tucano_theme') === 'dark';
+    this.applyTheme();
+
+    // 2. Inicializa Banco e Executa Auto-Seed / Sync Não-Destrutivo
+    try {
+      await storage.autoSeedFromMasterJson(seedData);
+    } catch (err) {
+      console.warn('Erro durante auto-seed:', err);
+    }
+
+    // 3. Carrega Dados
+    await this.refreshData();
+
+    // 4. Registra Service Worker PWA (Offline-First)
+    if ('serviceWorker' in navigator && !window.location.host.includes('tauri')) {
+      navigator.serviceWorker.register('/sw.js').catch(err => {
+        console.warn('Falha ao registrar Service Worker:', err);
+      });
+    }
+
+    // 5. Renderiza Interface
+    this.renderShell();
+    this.executeSearch();
+  }
+
+  private applyTheme(): void {
+    if (this.isDark) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+    }
+    localStorage.setItem('tucano_theme', this.isDark ? 'dark' : 'light');
+  }
+
+  private toggleTheme(): void {
+    this.isDark = !this.isDark;
+    this.applyTheme();
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.innerHTML = this.isDark ? icons.sun('w-5 h-5') : icons.moon('w-5 h-5');
+  }
+
+  private toggleClientMode(): void {
+    this.clientMode = !this.clientMode;
+    const btn = document.getElementById('client-mode-btn');
+    if (btn) {
+      btn.innerHTML = this.clientMode
+        ? `${icons.eyeOff('w-4 h-4 text-amber-500')} <span class="text-xs font-semibold text-amber-600 dark:text-amber-400">Modo Cliente (Preços Ocultos)</span>`
+        : `${icons.eye('w-4 h-4 text-emerald-600 dark:text-emerald-400')} <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Modo Balcão (Preços Visíveis)</span>`;
+    }
+    this.renderProductsGrid();
+  }
+
+  public async refreshData(): Promise<void> {
+    this.allProducts = await storage.getAllProductsWithInventory(true);
+    this.allRelations = await storage.getAllRelations();
+    const activeProducts = this.allProducts.filter(p => !p.isTrash);
+    searchEngine.index(activeProducts);
+  }
+
+  private executeSearch(): void {
+    const input = document.getElementById('search-input') as HTMLInputElement | null;
+    const query = input ? input.value : '';
+
+    const t0 = performance.now();
+    const activeList = this.currentTab === 'catalog'
+      ? this.allProducts.filter(p => !p.isTrash)
+      : this.allProducts.filter(p => p.isTrash);
+
+    // Reindexa engine se mudou de aba
+    searchEngine.index(activeList);
+
+    this.currentMatches = searchEngine.search(query, {
+      automaker: this.currentFilterAutomaker,
+      priceStatus: this.currentFilterPrice as any,
+    });
+    this.lastSearchTimeMs = Math.round((performance.now() - t0) * 10) / 10;
+
+    this.renderProductsGrid();
+    this.updateStats();
+  }
+
+  private renderShell(): void {
+    const appEl = document.getElementById('app')!;
+    const automakers = Array.from(
+      new Set(
+        this.allProducts
+          .filter(p => !p.isTrash)
+          .flatMap(p => p.automakers || [])
+          .filter(a => a && a !== 'Universal')
+      )
+    ).sort();
+
+    appEl.innerHTML = `
+      <!-- Top Bar / Header de Balcão -->
+      <header class="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <!-- Logo & Marca -->
+          <div class="flex items-center gap-3 select-none">
+            <div class="w-10 h-10 rounded-xl bg-blue-700 text-white flex items-center justify-center font-extrabold text-xl shadow-md shadow-blue-700/20">
+              T
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h1 class="text-base font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
+                  AUTO PEÇAS TUCANO
+                </h1>
+                <span class="bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">
+                  UNIVERSAL
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-1">
+                Catálogo Eletrônico de Balcão Offline-First
+              </p>
+            </div>
+          </div>
+
+          <!-- Barra de Busca Instantânea (< 50ms) -->
+          <div class="flex-1 max-w-2xl relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+              ${icons.search('w-5 h-5')}
+            </div>
+            <input
+              type="text"
+              id="search-input"
+              class="w-full pl-11 pr-24 py-2.5 bg-slate-100 dark:bg-slate-800/80 border border-slate-300/80 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white dark:focus:bg-slate-800 font-medium text-sm transition"
+              placeholder="Buscar por Código Universal (5 dígitos), OEM, Aplicação, Veículo ou Caixa..."
+              autofocus
+            />
+            <div class="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">
+              <span id="benchmark-pill" class="text-[10px] font-mono bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-md font-bold">
+                0.0 ms
+              </span>
+            </div>
+          </div>
+
+          <!-- Ações Superiores -->
+          <div class="flex items-center gap-2">
+            <!-- Botão Modo Cliente (Ocultar Preços) -->
+            <button
+              id="client-mode-btn"
+              class="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl inline-flex items-center gap-2 transition"
+              title="Alternar entre visualização de balcão e tela de cliente"
+            >
+              ${icons.eye('w-4 h-4 text-emerald-600 dark:text-emerald-400')}
+              <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Modo Balcão</span>
+            </button>
+
+            <!-- Alternador de Tema Claro / Escuro -->
+            <button
+              id="theme-toggle-btn"
+              class="p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition"
+              title="Alternar Modo Claro / Modo Escuro"
+            >
+              ${this.isDark ? icons.sun('w-5 h-5') : icons.moon('w-5 h-5')}
+            </button>
+
+            <!-- Botão Nova Peça -->
+            <button
+              id="new-product-btn"
+              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm hover:shadow inline-flex items-center gap-1.5 transition"
+            >
+              ${icons.plus('w-4 h-4')}
+              <span>Nova Peça</span>
+            </button>
+
+            <!-- Menu de Gestão e Backup -->
+            <div class="relative">
+              <button
+                id="management-menu-btn"
+                class="p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition"
+                title="Gestão, Backup, CSV e Auditoria"
+              >
+                ${icons.database('w-5 h-5')}
+              </button>
+              <div id="management-dropdown" class="hidden absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-50 text-xs font-medium">
+                <button id="menu-export-backup" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                  ${icons.download('w-4 h-4')} <span>Exportar Backup (.json)</span>
+                </button>
+                <label class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer">
+                  ${icons.upload('w-4 h-4')} <span>Restaurar Backup (.json)</span>
+                  <input type="file" id="menu-restore-file" accept=".json" class="hidden" />
+                </label>
+                <hr class="my-1 border-slate-200 dark:border-slate-700" />
+                <button id="menu-export-csv" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                  ${icons.download('w-4 h-4')} <span>Exportar Preços/Estoque (.csv)</span>
+                </button>
+                <label class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer">
+                  ${icons.upload('w-4 h-4')} <span>Importar Preços/Estoque (.csv)</span>
+                  <input type="file" id="menu-import-csv" accept=".csv" class="hidden" />
+                </label>
+                <hr class="my-1 border-slate-200 dark:border-slate-700" />
+                <button id="menu-audit-logs" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                  ${icons.database('w-4 h-4')} <span>Trilha de Auditoria</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filtros Rápidos de Balcão -->
+        <div class="bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200/80 dark:border-slate-800 px-4 py-2">
+          <div class="max-w-7xl mx-auto flex items-center justify-between text-xs">
+            <div class="flex items-center gap-3 overflow-x-auto py-1">
+              <span class="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">Montadora:</span>
+              <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition ${this.currentFilterAutomaker === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="all">
+                Todas
+              </button>
+              ${automakers.map(a => `
+                <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition ${this.currentFilterAutomaker === a ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="${a}">
+                  ${a}
+                </button>
+              `).join('')}
+            </div>
+
+            <div class="flex items-center gap-2 shrink-0">
+              <button id="tab-catalog" class="px-3 py-1 font-semibold rounded-lg transition ${this.currentTab === 'catalog' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'}">
+                Catálogo Ativo
+              </button>
+              <button id="tab-trash" class="px-3 py-1 font-semibold rounded-lg transition ${this.currentTab === 'trash' ? 'bg-red-600 text-white' : 'text-slate-500 hover:text-red-600'}">
+                Lixeira
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Content Container -->
+      <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Sub-header de contagem e status -->
+        <div class="flex items-center justify-between mb-4 text-xs text-slate-500 dark:text-slate-400">
+          <div id="stats-counter" class="font-medium">
+            Carregando catálogo...
+          </div>
+          <div class="text-[11px] font-mono">
+            Pressione <kbd class="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-slate-800 dark:text-slate-200 font-bold">/</kbd> para focar na busca
+          </div>
+        </div>
+
+        <!-- Grid de Cards de Produtos -->
+        <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+      </main>
+    `;
+
+    this.bindEvents();
+  }
+
+  private bindEvents(): void {
+    // Busca ao digitar
+    const searchInput = document.getElementById('search-input') as HTMLInputElement | null;
+    searchInput?.addEventListener('input', () => this.executeSearch());
+
+    // Foco rápido na busca com '/'
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput?.focus();
+        searchInput?.select();
+      }
+    });
+
+    // Alternador de Tema
+    document.getElementById('theme-toggle-btn')?.addEventListener('click', () => this.toggleTheme());
+
+    // Alternador Modo Cliente
+    document.getElementById('client-mode-btn')?.addEventListener('click', () => this.toggleClientMode());
+
+    // Nova Peça
+    document.getElementById('new-product-btn')?.addEventListener('click', () => {
+      productFormModal.open(null, async () => {
+        await this.refreshData();
+        this.executeSearch();
+      });
+    });
+
+    // Filtros de Montadora
+    document.querySelectorAll('.filter-automaker-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const brand = btn.getAttribute('data-brand') || 'all';
+        this.currentFilterAutomaker = brand;
+        document.querySelectorAll('.filter-automaker-btn').forEach(b => {
+          b.classList.remove('bg-blue-600', 'text-white');
+          b.classList.add('bg-white', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300', 'border');
+        });
+        btn.classList.add('bg-blue-600', 'text-white');
+        btn.classList.remove('bg-white', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300', 'border');
+        this.executeSearch();
+      });
+    });
+
+    // Abas Catálogo / Lixeira
+    document.getElementById('tab-catalog')?.addEventListener('click', () => {
+      this.currentTab = 'catalog';
+      this.renderShell();
+      this.executeSearch();
+    });
+
+    document.getElementById('tab-trash')?.addEventListener('click', () => {
+      this.currentTab = 'trash';
+      this.renderShell();
+      this.executeSearch();
+    });
+
+    // Menu de Gestão
+    const menuBtn = document.getElementById('management-menu-btn');
+    const menuDropdown = document.getElementById('management-dropdown');
+    menuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menuDropdown?.classList.toggle('hidden');
+    });
+
+    window.addEventListener('click', () => {
+      menuDropdown?.classList.add('hidden');
+    });
+
+    // Ações de Backup e CSV
+    document.getElementById('menu-export-backup')?.addEventListener('click', async () => {
+      await BackupRestoreManager.exportBackupFile();
+    });
+
+    const restoreInput = document.getElementById('menu-restore-file') as HTMLInputElement | null;
+    restoreInput?.addEventListener('change', async () => {
+      if (restoreInput.files && restoreInput.files[0]) {
+        if (confirm('Restaurar este backup substituirá os dados atuais após validação de integridade SHA-256. Deseja prosseguir?')) {
+          try {
+            await BackupRestoreManager.restoreBackupFromFile(restoreInput.files[0]);
+            alert('Backup restaurado com sucesso com integridade comprovada!');
+            await this.refreshData();
+            this.executeSearch();
+          } catch (err: any) {
+            alert(`Falha ao restaurar: ${err.message}`);
+          }
+        }
+      }
+    });
+
+    document.getElementById('menu-export-csv')?.addEventListener('click', async () => {
+      await BackupRestoreManager.exportInventoryCsv();
+    });
+
+    const importCsvInput = document.getElementById('menu-import-csv') as HTMLInputElement | null;
+    importCsvInput?.addEventListener('change', async () => {
+      if (importCsvInput.files && importCsvInput.files[0]) {
+        const count = await BackupRestoreManager.importInventoryCsv(importCsvInput.files[0]);
+        alert(`Importação concluída! ${count} produtos tiveram seus preços e prateleiras atualizados.`);
+        await this.refreshData();
+        this.executeSearch();
+      }
+    });
+
+    document.getElementById('menu-audit-logs')?.addEventListener('click', async () => {
+      await BackupRestoreManager.openAuditLogsModal();
+    });
+  }
+
+  private updateStats(): void {
+    const pill = document.getElementById('benchmark-pill');
+    if (pill) {
+      pill.textContent = `${this.lastSearchTimeMs} ms`;
+    }
+
+    const counter = document.getElementById('stats-counter');
+    if (counter) {
+      const total = this.currentMatches.length;
+      counter.innerHTML = `Mostrando <strong>${total}</strong> peças encontradas em <strong>${this.lastSearchTimeMs} ms</strong>`;
+    }
+  }
+
+  private async renderProductsGrid(): Promise<void> {
+    const grid = document.getElementById('products-grid');
+    if (!grid) return;
+
+    if (this.currentMatches.length === 0) {
+      grid.innerHTML = `
+        <div class="col-span-full py-16 text-center text-slate-400">
+          <div class="inline-flex p-3 bg-slate-100 dark:bg-slate-800 rounded-full mb-3 text-slate-400">
+            ${icons.search('w-8 h-8')}
+          </div>
+          <h3 class="text-base font-bold text-slate-700 dark:text-slate-300">Nenhuma peça encontrada</h3>
+          <p class="text-xs text-slate-500 mt-1">Verifique o código ou tente buscar por modelo ou caixa da loja.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Renderiza cards de forma assíncrona com suporte a galeria híbrida
+    const cardsHtml = await Promise.all(
+      this.currentMatches.slice(0, 100).map(async match => {
+        const item = match.product;
+        const inv = item.storeInventory;
+        const displayItems = await ImageGallery.getDisplayItemsForProduct(item);
+        const cardPreviewHtml = ImageGallery.renderCardPreview(displayItems, item.description || item.sku);
+
+        const sellingFormatted = formatBRL(inv.sellingPriceCents);
+        const costFormatted = formatBRL(inv.costPriceCents);
+
+        // Vínculos
+        const relations = relationsEngine.organizeRelations(item.sku, this.allRelations);
+        const totalRelations =
+          relations.equivalences.length +
+          relations.couplings.length +
+          relations.kits.length +
+          relations.variants.length +
+          relations.transitiveSuggestions.length;
+
+        return `
+          <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col justify-between group" data-product-id="${item.id}">
+            <!-- Imagem e Previews -->
+            ${cardPreviewHtml}
+
+            <!-- Conteúdo Técnico do Card -->
+            <div class="p-4 flex-1 flex flex-col justify-between space-y-3">
+              <div>
+                <!-- Linha 1: SKU em Alta Proeminência Monospaçada + Caixa -->
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <span class="font-mono text-xl font-extrabold text-blue-700 dark:text-blue-400 tracking-tight">
+                      ${item.sku}
+                    </span>
+                    <span class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      ${item.brand}
+                    </span>
+                  </div>
+
+                  ${inv.shelfLocation ? `
+                    <div class="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2.5 py-1 rounded-lg text-right shrink-0">
+                      <span class="block text-[9px] font-bold text-slate-400 uppercase leading-none">CAIXA</span>
+                      <span class="font-mono text-sm font-black text-slate-800 dark:text-slate-200 leading-none">
+                        ${inv.shelfLocation}
+                      </span>
+                    </div>
+                  ` : ''}
+                </div>
+
+                <!-- Descrição Técnica -->
+                <p class="text-xs font-medium text-slate-800 dark:text-slate-200 mt-2 line-clamp-2 leading-relaxed" title="${item.description}">
+                  ${item.description}
+                </p>
+
+                <!-- Aplicações e Montadoras -->
+                ${(item.automakers && item.automakers.length > 0) ? `
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    ${item.automakers.map(a => `
+                      <span class="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                        ${a}
+                      </span>
+                    `).join('')}
+                    ${(item.models && item.models.length > 0) ? `
+                      <span class="text-[10px] text-slate-500 font-medium">
+                        ${item.models.slice(0, 2).join(', ')}${item.models.length > 2 ? '...' : ''}
+                      </span>
+                    ` : ''}
+                  </div>
+                ` : ''}
+
+                <!-- Códigos OEM -->
+                ${(item.oemCodes && item.oemCodes.length > 0) ? `
+                  <div class="mt-2 text-[10px] font-mono text-slate-500 truncate" title="OEM: ${item.oemCodes.join(', ')}">
+                    OEM: <span class="font-bold text-slate-600 dark:text-slate-400">${item.oemCodes.slice(0, 2).join(', ')}</span>
+                  </div>
+                ` : ''}
+              </div>
+
+              <!-- Seção de Preços (Visível ou Oculta pelo Modo Cliente) -->
+              <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
+                ${this.clientMode ? `
+                  <div class="py-1 text-center bg-slate-100 dark:bg-slate-800/80 rounded-lg">
+                    <span class="text-[11px] font-mono text-slate-400">Preço Oculto (Modo Cliente)</span>
+                  </div>
+                ` : `
+                  <div class="flex items-baseline justify-between">
+                    <div>
+                      <span class="text-[10px] font-bold text-slate-400 uppercase block">Venda</span>
+                      <span class="font-mono text-lg font-black text-emerald-600 dark:text-emerald-400">
+                        ${sellingFormatted}
+                      </span>
+                    </div>
+                    <div class="text-right">
+                      <span class="text-[9px] font-semibold text-slate-400 uppercase block">Custo (-130%)</span>
+                      <span class="font-mono text-xs text-slate-500 dark:text-slate-400">
+                        ${costFormatted}
+                      </span>
+                    </div>
+                  </div>
+                `}
+
+                <!-- Badge de Vínculos Multimarca -->
+                ${totalRelations > 0 ? `
+                  <div class="mt-2 flex items-center gap-1.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 p-1.5 rounded-lg">
+                    ${icons.link('w-3 h-3')}
+                    <span>${totalRelations} vínculos (equivalentes / acoplamentos)</span>
+                  </div>
+                ` : ''}
+
+                <!-- Botões de Ação do Card -->
+                <div class="mt-3 flex items-center gap-2">
+                  <button
+                    class="btn-whatsapp flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs inline-flex items-center justify-center gap-1.5 transition shadow-sm"
+                    data-sku="${item.sku}"
+                    data-desc="${item.description}"
+                    data-shelf="${inv.shelfLocation}"
+                    data-price="${this.clientMode ? '' : sellingFormatted}"
+                    title="Copiar resumo formatado para o WhatsApp"
+                  >
+                    ${icons.whatsapp('w-3.5 h-3.5')}
+                    <span>WhatsApp</span>
+                  </button>
+
+                  <button
+                    class="btn-edit-product p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition"
+                    data-id="${item.id}"
+                    title="Editar Peça"
+                  >
+                    ${icons.edit('w-4 h-4')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      })
+    );
+
+    grid.innerHTML = cardsHtml.join('');
+
+    // Eventos dos Cards
+    grid.querySelectorAll('[data-action="open-lightbox"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const url = el.getAttribute('data-url')!;
+        const title = el.getAttribute('data-title')!;
+        lightbox.open(url, title);
+      });
+    });
+
+    grid.querySelectorAll('.btn-edit-product').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const prodId = btn.getAttribute('data-id')!;
+        const prod = this.allProducts.find(p => p.id === prodId);
+        if (prod) {
+          productFormModal.open(prod, async () => {
+            await this.refreshData();
+            this.executeSearch();
+          });
+        }
+      });
+    });
+
+    grid.querySelectorAll('.btn-whatsapp').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sku = btn.getAttribute('data-sku')!;
+        const desc = btn.getAttribute('data-desc')!;
+        const shelf = btn.getAttribute('data-shelf')!;
+        const price = btn.getAttribute('data-price')!;
+
+        let msg = `*Auto Peças Tucano*\n`;
+        msg += `*Código:* ${sku}\n`;
+        msg += `*Peça:* ${desc}\n`;
+        if (shelf) msg += `*Localização:* Caixa ${shelf}\n`;
+        if (price) msg += `*Preço:* ${price}\n`;
+
+        navigator.clipboard.writeText(msg).then(() => {
+          const originalText = btn.innerHTML;
+          btn.innerHTML = `${icons.check('w-3.5 h-3.5')} <span>Copiado!</span>`;
+          setTimeout(() => {
+            btn.innerHTML = originalText;
+          }, 1800);
+        });
+      });
+    });
+  }
+}
+
+// Inicializa Aplicação
+const app = new App();
+window.addEventListener('DOMContentLoaded', () => {
+  app.init();
+});

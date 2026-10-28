@@ -1,0 +1,18 @@
+[package]
+name = "catalogo-universal-tucano"
+version = "1.0.0"
+description = "Catalogo Inteligente de Balcao Tucano Auto Pecas"
+authors = ["Auto Pecas Tucano"]
+edition = "2021"
+
+[lib]
+name = "catalogo_universal_tucano_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

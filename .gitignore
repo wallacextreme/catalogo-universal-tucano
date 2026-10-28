@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+target/
+src-tauri/target/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# Large archive zips
+*.zip
+
+# Playwright cache / temp artifacts
+scripts/.playwright_scrape_cache.json
+scripts/temp_raw_images/
