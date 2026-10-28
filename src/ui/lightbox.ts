@@ -12,6 +12,10 @@ export class Lightbox {
   private currentIndex = 0;
   private title = '';
 
+  private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
+  private mouseUpHandler: (() => void) | null = null;
+
   public open(imagesInput: string[] | string, title: string, initialIndex = 0): void {
     this.close();
     const raw = Array.isArray(imagesInput) ? imagesInput : [imagesInput];
@@ -125,18 +129,39 @@ export class Lightbox {
       }
     };
 
+    // Troca de ângulo instantânea SEM recriar o DOM nem multiplicar event listeners
     const changeAngle = (newIndex: number) => {
-      if (newIndex < 0) newIndex = this.images.length - 1;
-      if (newIndex >= this.images.length) newIndex = 0;
-      this.currentIndex = newIndex;
+      const total = this.images.length;
+      if (total <= 1) return;
+
+      let newIdx = newIndex;
+      if (newIdx < 0) newIdx = total - 1;
+      if (newIdx >= total) newIdx = 0;
+
+      this.currentIndex = newIdx;
       this.currentZoom = 1.0;
       this.translateX = 0;
       this.translateY = 0;
-      this.render();
-      this.bindEvents();
+      updateTransform();
+
+      img.src = this.images[newIdx];
+
+      const counter = this.overlay?.querySelector('#lb-angle-counter');
+      if (counter) {
+        counter.textContent = `Ângulo ${newIdx + 1} de ${total}`;
+      }
+
+      this.overlay?.querySelectorAll<HTMLButtonElement>('.lb-thumb-btn').forEach((btn) => {
+        const idx = parseInt(btn.getAttribute('data-thumb-idx') || '0', 10);
+        if (idx === newIdx) {
+          btn.className = 'lb-thumb-btn w-14 h-14 rounded-xl overflow-hidden border-2 transition-all p-1 bg-white cursor-pointer shrink-0 border-blue-500 scale-105 shadow-md shadow-blue-500/40 ring-2 ring-blue-500/50';
+        } else {
+          btn.className = 'lb-thumb-btn w-14 h-14 rounded-xl overflow-hidden border-2 transition-all p-1 bg-white cursor-pointer shrink-0 border-transparent opacity-60 hover:opacity-100 hover:border-slate-500';
+        }
+      });
     };
 
-    // Navegação de Ângulos
+    // 1. Navegação de Ângulos (Botões Laterais)
     this.overlay.querySelector('#lb-prev-angle')?.addEventListener('click', (e) => {
       e.stopPropagation();
       changeAngle(this.currentIndex - 1);
@@ -147,7 +172,7 @@ export class Lightbox {
       changeAngle(this.currentIndex + 1);
     });
 
-    // Thumbnails
+    // 2. Thumbnails do Rodapé
     this.overlay.querySelectorAll('.lb-thumb-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -156,14 +181,14 @@ export class Lightbox {
       });
     });
 
-    // Zoom In
+    // 3. Zoom In
     this.overlay.querySelector('#lb-zoom-in')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.currentZoom = Math.min(4.0, this.currentZoom + 0.5);
       updateTransform();
     });
 
-    // Zoom Out
+    // 4. Zoom Out
     this.overlay.querySelector('#lb-zoom-out')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.currentZoom = Math.max(0.5, this.currentZoom - 0.5);
@@ -174,7 +199,7 @@ export class Lightbox {
       updateTransform();
     });
 
-    // Reset Zoom
+    // 5. Reset Zoom
     this.overlay.querySelector('#lb-zoom-reset')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.currentZoom = 1.0;
@@ -183,7 +208,7 @@ export class Lightbox {
       updateTransform();
     });
 
-    // Drag to Pan
+    // 6. Arraste e Pan
     viewport.addEventListener('mousedown', (e) => {
       if (this.currentZoom <= 1.0) return;
       this.isDragging = true;
@@ -191,18 +216,20 @@ export class Lightbox {
       this.startY = e.clientY - this.translateY;
     });
 
-    window.addEventListener('mousemove', (e) => {
+    this.mouseMoveHandler = (e: MouseEvent) => {
       if (!this.isDragging) return;
       this.translateX = e.clientX - this.startX;
       this.translateY = e.clientY - this.startY;
       updateTransform();
-    });
+    };
+    window.addEventListener('mousemove', this.mouseMoveHandler);
 
-    window.addEventListener('mouseup', () => {
+    this.mouseUpHandler = () => {
       this.isDragging = false;
-    });
+    };
+    window.addEventListener('mouseup', this.mouseUpHandler);
 
-    // Wheel Zoom
+    // 7. Zoom com Scroll do Mouse
     viewport.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.25 : -0.25;
@@ -214,7 +241,7 @@ export class Lightbox {
       updateTransform();
     }, { passive: false });
 
-    // Close on button or backdrop click
+    // 8. Fechamento
     this.overlay.querySelector('#lb-close')?.addEventListener('click', () => this.close());
     this.overlay.addEventListener('click', (e) => {
       if (e.target === this.overlay || e.target === viewport) {
@@ -222,15 +249,11 @@ export class Lightbox {
       }
     });
 
-    // Teclado: ArrowLeft / ArrowRight para trocar ângulos, Escape para fechar
-    const onKey = (e: KeyboardEvent) => {
-      if (!this.overlay) {
-        window.removeEventListener('keydown', onKey);
-        return;
-      }
+    // 9. Teclado: ArrowLeft / ArrowRight / Escape
+    this.keydownHandler = (e: KeyboardEvent) => {
+      if (!this.overlay) return;
       if (e.key === 'Escape') {
         this.close();
-        window.removeEventListener('keydown', onKey);
       } else if (e.key === 'ArrowLeft' && this.images.length > 1) {
         e.preventDefault();
         changeAngle(this.currentIndex - 1);
@@ -239,14 +262,27 @@ export class Lightbox {
         changeAngle(this.currentIndex + 1);
       }
     };
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', this.keydownHandler);
   }
 
   public close(): void {
+    if (this.keydownHandler) {
+      window.removeEventListener('keydown', this.keydownHandler);
+      this.keydownHandler = null;
+    }
+    if (this.mouseMoveHandler) {
+      window.removeEventListener('mousemove', this.mouseMoveHandler);
+      this.mouseMoveHandler = null;
+    }
+    if (this.mouseUpHandler) {
+      window.removeEventListener('mouseup', this.mouseUpHandler);
+      this.mouseUpHandler = null;
+    }
     if (this.overlay && this.overlay.parentNode) {
       this.overlay.parentNode.removeChild(this.overlay);
       this.overlay = null;
     }
+    this.isDragging = false;
   }
 }
 

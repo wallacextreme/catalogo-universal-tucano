@@ -1,5 +1,5 @@
 // Service Worker Offline-First para Catálogo Universal Tucano
-const CACHE_NAME = 'tucano-catalog-v2';
+const CACHE_NAME = 'tucano-catalog-v3';
 
 const getBasePath = () => {
   const swPath = self.location.pathname;
