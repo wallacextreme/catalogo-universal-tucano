@@ -584,6 +584,64 @@ export class CatalogStorage {
       tx.onerror = () => reject(tx.error);
     });
   }
+
+  public async getTrashProducts(): Promise<ProductWithInventory[]> {
+    const all = await this.getAllProductsWithInventory(true);
+    return all.filter(p => p.isTrash);
+  }
+
+  public async getRecentAuditLogs(limit = 50): Promise<AuditLog[]> {
+    const all = await this.getAuditLogs();
+    return all.slice(0, limit);
+  }
+
+  public async applyGlobalMarkupOrPriceAdjustment(params: {
+    mode: 'markupOnCost' | 'percentOnPrice';
+    percent: number;
+  }): Promise<{ updatedCount: number }> {
+    const db = await this.getDb();
+    const activeProducts = await this.getAllProductsWithInventory(false);
+    const tx = db.transaction(['storeInventory', 'auditLogs'], 'readwrite');
+    const invStore = tx.objectStore('storeInventory');
+
+    for (const prod of activeProducts) {
+      const inv = prod.storeInventory;
+      let costCents = inv.costPriceCents;
+      if (!costCents || costCents <= 0) {
+        costCents = Math.round(inv.sellingPriceCents / 2.30);
+        inv.costPriceCents = costCents;
+      }
+
+      if (params.mode === 'markupOnCost') {
+        const factor = 1 + (params.percent / 100);
+        inv.sellingPriceCents = Math.max(1, Math.round(costCents * factor));
+      } else {
+        const factor = 1 + (params.percent / 100);
+        inv.sellingPriceCents = Math.max(1, Math.round(inv.sellingPriceCents * factor));
+      }
+      inv.updatedAt = new Date().toISOString();
+      invStore.put(inv);
+    }
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+
+    await this.addAuditLog(
+      'UPDATE',
+      'ALL',
+      `Reajuste em massa (${params.mode === 'markupOnCost' ? 'Markup sobre Custo' : 'Ajuste Linear'}: ${params.percent > 0 ? '+' : ''}${params.percent}%) aplicado em ${activeProducts.length} produtos.`
+    );
+
+    return { updatedCount: activeProducts.length };
+  }
+
+  public async resetToFactorySeedPreservingStore(seedProducts: any[]): Promise<number> {
+    const res = await this.autoSeedFromMasterJson(seedProducts);
+    await this.addAuditLog('SYNC', 'Catalog', `Catálogo original restaurado preservando estoques e preços.`);
+    return res.added + res.synced;
+  }
 }
 
 // Helpers para base64 e SHA-256

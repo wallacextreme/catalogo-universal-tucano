@@ -6,7 +6,7 @@ import { relationsEngine } from './relations/relations-engine';
 import { ImageGallery } from './ui/image-gallery';
 import { lightbox } from './ui/lightbox';
 import { productFormModal } from './ui/product-form-modal';
-import { BackupRestoreManager } from './ui/backup-restore';
+import { renderManagementModal } from './ui/management-modal';
 import { icons } from './ui/icons';
 import { formatBRL } from './domain/currency';
 import seedData from './data/catalog-master-seed.json';
@@ -19,7 +19,6 @@ class App {
   private isDark = false;
   private currentFilterAutomaker = 'all';
   private currentFilterPrice = 'all';
-  private currentTab: 'catalog' | 'trash' = 'catalog';
   private lastSearchTimeMs = 0;
 
   public async init(): Promise<void> {
@@ -90,9 +89,7 @@ class App {
     const query = input ? input.value : '';
 
     const t0 = performance.now();
-    const activeList = this.currentTab === 'catalog'
-      ? this.allProducts.filter(p => !p.isTrash)
-      : this.allProducts.filter(p => p.isTrash);
+    const activeList = this.allProducts.filter(p => !p.isTrash);
 
     // Reindexa engine se mudou de aba
     searchEngine.index(activeList);
@@ -191,63 +188,29 @@ class App {
               <span>Nova Peça</span>
             </button>
 
-            <!-- Menu de Gestão e Backup -->
-            <div class="relative">
-              <button
-                id="management-menu-btn"
-                class="p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition"
-                title="Gestão, Backup, CSV e Auditoria"
-              >
-                ${icons.database('w-5 h-5')}
-              </button>
-              <div id="management-dropdown" class="hidden absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-50 text-xs font-medium">
-                <button id="menu-export-backup" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
-                  ${icons.download('w-4 h-4')} <span>Exportar Backup (.json)</span>
-                </button>
-                <label class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer">
-                  ${icons.upload('w-4 h-4')} <span>Restaurar Backup (.json)</span>
-                  <input type="file" id="menu-restore-file" accept=".json" class="hidden" />
-                </label>
-                <hr class="my-1 border-slate-200 dark:border-slate-700" />
-                <button id="menu-export-csv" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
-                  ${icons.download('w-4 h-4')} <span>Exportar Preços/Estoque (.csv)</span>
-                </button>
-                <label class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer">
-                  ${icons.upload('w-4 h-4')} <span>Importar Preços/Estoque (.csv)</span>
-                  <input type="file" id="menu-import-csv" accept=".csv" class="hidden" />
-                </label>
-                <hr class="my-1 border-slate-200 dark:border-slate-700" />
-                <button id="menu-audit-logs" class="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200">
-                  ${icons.database('w-4 h-4')} <span>Trilha de Auditoria</span>
-                </button>
-              </div>
-            </div>
+            <!-- Botão de Gestão, Backup & Auditoria de Balcão -->
+            <button
+              id="management-menu-btn"
+              class="p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+              title="Gestão, Backup, CSV, Lixeira e Auditoria de Balcão"
+            >
+              ${icons.database('w-5 h-5 text-red-600 dark:text-red-500')}
+            </button>
           </div>
         </div>
 
         <!-- Filtros Rápidos de Balcão -->
         <div class="bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200/80 dark:border-slate-800 px-4 py-2">
-          <div class="max-w-7xl mx-auto flex items-center justify-between text-xs">
-            <div class="flex items-center gap-3 overflow-x-auto py-1">
-              <span class="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">Montadora:</span>
-              <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition ${this.currentFilterAutomaker === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="all">
-                Todas
+          <div class="max-w-7xl mx-auto flex items-center gap-3 overflow-x-auto py-1 text-xs">
+            <span class="font-semibold text-slate-500 uppercase tracking-wider text-[10px] shrink-0">Montadora:</span>
+            <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition shrink-0 ${this.currentFilterAutomaker === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="all">
+              Todas
+            </button>
+            ${automakers.map(a => `
+              <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition shrink-0 ${this.currentFilterAutomaker === a ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="${a}">
+                ${a}
               </button>
-              ${automakers.map(a => `
-                <button class="filter-automaker-btn px-2.5 py-1 rounded-lg font-medium transition ${this.currentFilterAutomaker === a ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}" data-brand="${a}">
-                  ${a}
-                </button>
-              `).join('')}
-            </div>
-
-            <div class="flex items-center gap-2 shrink-0">
-              <button id="tab-catalog" class="px-3 py-1 font-semibold rounded-lg transition ${this.currentTab === 'catalog' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'}">
-                Catálogo Ativo
-              </button>
-              <button id="tab-trash" class="px-3 py-1 font-semibold rounded-lg transition ${this.currentTab === 'trash' ? 'bg-red-600 text-white' : 'text-slate-500 hover:text-red-600'}">
-                Lixeira
-              </button>
-            </div>
+            `).join('')}
           </div>
         </div>
       </header>
@@ -315,68 +278,15 @@ class App {
       });
     });
 
-    // Abas Catálogo / Lixeira
-    document.getElementById('tab-catalog')?.addEventListener('click', () => {
-      this.currentTab = 'catalog';
-      this.renderShell();
-      this.executeSearch();
-    });
-
-    document.getElementById('tab-trash')?.addEventListener('click', () => {
-      this.currentTab = 'trash';
-      this.renderShell();
-      this.executeSearch();
-    });
-
-    // Menu de Gestão
-    const menuBtn = document.getElementById('management-menu-btn');
-    const menuDropdown = document.getElementById('management-dropdown');
-    menuBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menuDropdown?.classList.toggle('hidden');
-    });
-
-    window.addEventListener('click', () => {
-      menuDropdown?.classList.add('hidden');
-    });
-
-    // Ações de Backup e CSV
-    document.getElementById('menu-export-backup')?.addEventListener('click', async () => {
-      await BackupRestoreManager.exportBackupFile();
-    });
-
-    const restoreInput = document.getElementById('menu-restore-file') as HTMLInputElement | null;
-    restoreInput?.addEventListener('change', async () => {
-      if (restoreInput.files && restoreInput.files[0]) {
-        if (confirm('Restaurar este backup substituirá os dados atuais após validação de integridade SHA-256. Deseja prosseguir?')) {
-          try {
-            await BackupRestoreManager.restoreBackupFromFile(restoreInput.files[0]);
-            alert('Backup restaurado com sucesso com integridade comprovada!');
-            await this.refreshData();
-            this.executeSearch();
-          } catch (err: any) {
-            alert(`Falha ao restaurar: ${err.message}`);
-          }
-        }
-      }
-    });
-
-    document.getElementById('menu-export-csv')?.addEventListener('click', async () => {
-      await BackupRestoreManager.exportInventoryCsv();
-    });
-
-    const importCsvInput = document.getElementById('menu-import-csv') as HTMLInputElement | null;
-    importCsvInput?.addEventListener('change', async () => {
-      if (importCsvInput.files && importCsvInput.files[0]) {
-        const count = await BackupRestoreManager.importInventoryCsv(importCsvInput.files[0]);
-        alert(`Importação concluída! ${count} produtos tiveram seus preços e prateleiras atualizados.`);
-        await this.refreshData();
-        this.executeSearch();
-      }
-    });
-
-    document.getElementById('menu-audit-logs')?.addEventListener('click', async () => {
-      await BackupRestoreManager.openAuditLogsModal();
+    // Gestão, Backup & Auditoria de Balcão (Modal Completo Unificado)
+    document.getElementById('management-menu-btn')?.addEventListener('click', () => {
+      renderManagementModal({
+        onClose: () => {},
+        onDatabaseReload: async () => {
+          await this.refreshData();
+          this.executeSearch();
+        },
+      });
     });
   }
 
