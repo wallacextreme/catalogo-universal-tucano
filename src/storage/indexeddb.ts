@@ -161,10 +161,17 @@ export class CatalogStorage {
         const mergedStatic = Array.from(new Set([...existingStatic, ...incomingStaticUrls]))
           .filter(url => !currentRemoved.includes(url));
 
+        // Sanitiza montadoras (remove ruídos de mineração como '0 <sem montadora>')
+        const mergedAutomakers = Array.from(
+          new Set([...(existingProduct.automakers || []), ...(raw.automakers || [])])
+        )
+          .map(a => (a === 'CITRON' || a === 'CITRON' || a === 'CITROËN' ? 'Citroën' : a.trim()))
+          .filter(a => a && !a.startsWith('0') && !a.toLowerCase().includes('sem montadora') && a !== 'nibus' && a !== 'Garagista');
+
         const updatedProduct: Product = {
           ...existingProduct,
           description: raw.description || existingProduct.description,
-          automakers: Array.from(new Set([...(existingProduct.automakers || []), ...(raw.automakers || [])])),
+          automakers: mergedAutomakers.length > 0 ? mergedAutomakers : ['Universal'],
           models: Array.from(new Set([...(existingProduct.models || []), ...(raw.models || [])])),
           yearRanges: raw.yearRanges && raw.yearRanges.length > 0 ? raw.yearRanges : existingProduct.yearRanges,
           staticImageUrls: mergedStatic,

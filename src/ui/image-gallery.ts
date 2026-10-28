@@ -64,20 +64,69 @@ export class ImageGallery {
       `;
     }
 
-    const coverItem = items.find(i => i.isCover) || items[0];
-    const extraCount = items.length - 1;
+    // Ordena para que a foto de capa seja a primeira
+    const sortedItems = [...items].sort((a, b) => (b.isCover ? 1 : 0) - (a.isCover ? 1 : 0));
+    const urls = sortedItems.map(i => i.url);
+    const coverUrl = urls[0];
+    const totalAngles = urls.length;
+    const urlsJson = encodeURIComponent(JSON.stringify(urls));
 
     return `
-      <div class="relative w-full h-48 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden group cursor-pointer" data-action="open-lightbox" data-url="${coverItem.url}" data-title="${productTitle}">
-        <img src="${coverItem.url}" alt="${productTitle}" loading="lazy" class="max-w-full max-h-full object-contain p-2 transition-transform duration-200 group-hover:scale-105" />
-        ${extraCount > 0 ? `
-          <span class="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[11px] font-mono px-1.5 py-0.5 rounded shadow">
-            +${extraCount} ângulos
+      <div
+        class="card-preview-container relative w-full h-48 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden group select-none"
+        data-all-urls="${urlsJson}"
+        data-current-idx="0"
+        data-title="${productTitle}"
+      >
+        <!-- Imagem Principal (Clicável para Lightbox) -->
+        <img
+          src="${coverUrl}"
+          alt="${productTitle}"
+          loading="lazy"
+          class="card-preview-img max-w-full max-h-full object-contain p-2 transition-transform duration-200 group-hover:scale-105 cursor-pointer"
+          data-action="open-lightbox"
+        />
+
+        <!-- Controles de Navegação de Ângulos (quando houver mais de 1 ângulo) -->
+        ${totalAngles > 1 ? `
+          <button
+            type="button"
+            class="btn-card-prev-angle absolute left-1.5 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white shadow-md transition opacity-80 group-hover:opacity-100 hover:scale-110 active:scale-95 cursor-pointer border border-slate-700"
+            title="Ver ângulo anterior"
+          >
+            ${icons.chevronLeft('w-4 h-4')}
+          </button>
+
+          <button
+            type="button"
+            class="btn-card-next-angle absolute right-1.5 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white shadow-md transition opacity-80 group-hover:opacity-100 hover:scale-110 active:scale-95 cursor-pointer border border-slate-700"
+            title="Ver próximo ângulo"
+          >
+            ${icons.chevronRight('w-4 h-4')}
+          </button>
+
+          <!-- Indicador Numérico de Ângulos (ex: 1 / 4) -->
+          <span class="card-angle-badge absolute bottom-2 right-2 bg-slate-900/85 text-white text-[11px] font-mono px-2 py-0.5 rounded-full shadow-md font-bold border border-slate-700/50 z-20">
+            1 / ${totalAngles}
           </span>
+
+          <!-- Pontos Indicadores de Ângulos (Dots) -->
+          <div class="card-dots-bar absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 z-20 bg-slate-950/60 px-2 py-1 rounded-full backdrop-blur-xs">
+            ${urls.map((_, idx) => `
+              <button
+                type="button"
+                class="card-dot-btn w-2 h-2 rounded-full transition-all cursor-pointer ${idx === 0 ? 'bg-blue-500 scale-125' : 'bg-slate-400/70 hover:bg-white'}"
+                data-dot-idx="${idx}"
+                title="Ir para ângulo ${idx + 1}"
+              ></button>
+            `).join('')}
+          </div>
         ` : ''}
-        <div class="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-700">
-          <span class="bg-white/90 p-1.5 rounded-full shadow-md text-slate-700">
-            ${icons.zoomIn('w-4 h-4')}
+
+        <!-- Ícone de Zoom Flutuante -->
+        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+          <span class="bg-white/90 dark:bg-slate-800/90 p-1 rounded-full shadow text-slate-700 dark:text-slate-200 block">
+            ${icons.zoomIn('w-3.5 h-3.5')}
           </span>
         </div>
       </div>
